@@ -33,32 +33,42 @@ f.onload = function () {
 
       var cv = d.getElementById('walk');
       log.push('canvas 尺寸         = ' + cv.width + 'x' + cv.height);
-      var a = cv.toDataURL();
-      log.push('画面非空            = ' + (a.length > 20000) + ' (' + a.length + ' bytes)');
+      log.push('画面非空            = ' + (cv.toDataURL().length > 20000));
 
       var list = w.RainyWalk.list();
       log.push('地标数量            = ' + list.length);
-      log.push('地标名              = ' + list.map(function (x) { return x.name; }).join(' / '));
-      log.push('导航按钮            = ' + d.querySelectorAll('.walk-nav__btn').length);
-      log.push('当前地点            = ' + (w.RainyWalk.current() || {}).name);
-      log.push('HUD 地名            = ' + d.getElementById('walkNow').textContent);
+      log.push('地标顺序            = ' + list.map(function (x) { return x.name; }).join(' / '));
+      log.push('当前地点 API        = ' + (w.RainyWalk.current() || {}).name);
+      log.push('walkNow 已移除      = ' + (d.getElementById('walkNow') === null));
+      log.push('walkNav 已移除      = ' + (d.getElementById('walkNav') === null));
 
-      /* 跳转到第 3 个地标 */
       w.RainyWalk.jumpTo(2);
       setTimeout(function () {
         log.push('跳转后当前地点      = ' + (w.RainyWalk.current() || {}).name);
-        log.push('HUD 地名(跳转后)    = ' + d.getElementById('walkNow').textContent);
 
-        var b = cv.toDataURL();
-        log.push('画面在动            = ' + (a !== b));
-
-        /* 退出，确认主场景把楼群收回来 */
         d.getElementById('walkExit').click();
         setTimeout(function () {
           log.push('退出后 isActive     = ' + w.RainyWalk.isActive());
           log.push('退出后 is-walking   = ' + d.body.classList.contains('is-walking'));
-          log.push('canvas 已清空       = ' + (d.getElementById('walk').toDataURL().length < 5000));
-          done();
+
+          /* 测试用场景下拉：锁定到具体地标 */
+          var sw = d.getElementById('sceneSwitch');
+          log.push('下拉存在            = ' + !!sw);
+          log.push('下拉选项            = ' + Array.prototype.map.call(sw.options, function (o) { return o.value; }).join(','));
+          sw.value = 'store';
+          sw.dispatchEvent(new w.Event('change', { bubbles: true }));
+          setTimeout(function () {
+            log.push('下拉→便利店 active  = ' + w.RainyWalk.isActive());
+            log.push('下拉→便利店 locked  = ' + w.RainyWalk.isLocked() + ' (' + w.RainyWalk.lockName() + ')');
+            log.push('下拉值已同步        = ' + (sw.value === 'store'));
+            log.push('当前地点            = ' + (w.RainyWalk.current() || {}).name);
+            sw.value = 'walk';
+            sw.dispatchEvent(new w.Event('change', { bubbles: true }));
+            setTimeout(function () {
+              log.push('下拉→漫步 locked    = ' + w.RainyWalk.isLocked());
+              done();
+            }, 350);
+          }, 350);
         }, 350);
       }, 900);
     }, 900);

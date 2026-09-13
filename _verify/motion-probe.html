@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>walk motion probe</title>
+<style>body{margin:0;background:#111;color:#eee;font:12px/1.5 monospace}pre{padding:10px}</style>
+</head>
+<body>
+<pre id="o">pending</pre>
+<iframe id="f" src="/" width="1200" height="760" style="width:1200px;height:760px;border:0"></iframe>
+<script>
+var log = [];
+var f = document.getElementById('f');
+
+f.onload = function () {
+  var w = f.contentWindow, d = f.contentDocument;
+  var errs = [];
+  w.addEventListener('error', function (e) { errs.push((e.message || '?') + ' @' + e.lineno); });
+
+  var cv = d.getElementById('walk');
+  var shots = [];
+
+  function snap(tag) {
+    var s = w.RainyWalk.status();
+    var len = cv.toDataURL().length;
+    shots.push({ tag: tag, len: len, s: s });
+    log.push(tag.padEnd(14) + ' running=' + s.running +
+             ' x=' + s.x + ' cam=' + s.cam + ' phase=' + s.phase +
+             ' now=' + s.now + ' drops=' + s.drops + ' len=' + len);
+  }
+
+  setTimeout(function () {
+    d.getElementById('walkBtn').click();
+    log.push('isMotion = ' + w.RainyCity.isMotion());
+    snap('t0');
+
+    setTimeout(function () {
+      snap('t1');
+      setTimeout(function () {
+        snap('t2');
+        log.push('画面有变化 = ' + (shots[0].len !== shots[2].len));
+        log.push('errors = ' + (errs.length ? errs.join(' | ') : 'none'));
+        document.getElementById('o').textContent = log.join('\n');
+      }, 600);
+    }, 600);
+  }, 400);
+};
+</script>
+</body>
+</html>
