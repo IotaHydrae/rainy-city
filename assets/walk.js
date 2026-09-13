@@ -1422,7 +1422,51 @@
       g.stroke();
     }
 
-    arm(ph, hoodieHi, 0.12);                  /* 近侧手臂与近侧腿反相，亮一点 */
+    /* 伞：撑在头顶，略向前倾挡雨。伞柄被近侧手臂握在胸前。 */
+    var gripX = 0.22, gripY = -1.16;           /* 握点 */
+    var cx = 0.12, cy = -1.84, R = 0.55;       /* 伞面圆心与半径 */
+    var lean = 0.10;                           /* 朝前进方向前倾 */
+
+    /* 伞柄 */
+    g.strokeStyle = bodyColor || '#222a33';
+    g.lineWidth = 0.035;
+    g.lineCap = 'round';
+    g.beginPath();
+    g.moveTo(gripX, gripY);
+    g.lineTo(cx, cy);
+    g.stroke();
+    /* 伞柄底部的小弯钩 */
+    g.beginPath();
+    g.moveTo(gripX, gripY);
+    g.quadraticCurveTo(gripX + 0.055, gripY + 0.055, gripX - 0.005, gripY + 0.075);
+    g.stroke();
+
+    /* 伞面：半个圆顶，整体前倾 */
+    g.save();
+    g.translate(cx, cy);
+    g.rotate(lean);
+    g.fillStyle = bodyColor || '#1e2730';
+    g.beginPath();
+    g.arc(0, 0, R, Math.PI, 0, false);         /* 上半圆 */
+    g.closePath();
+    g.fill();
+    /* 伞面高光弧 */
+    g.strokeStyle = bodyColor || 'rgba(255,255,255,.12)';
+    g.lineWidth = 0.03;
+    g.beginPath();
+    g.arc(0, 0, R * 0.95, Math.PI * 1.28, Math.PI * 1.72);
+    g.stroke();
+    /* 伞尖 */
+    g.fillStyle = bodyColor || '#3a434d';
+    g.beginPath();
+    g.arc(0, -R + 0.02, 0.05, 0, TAU);
+    g.fill();
+    g.restore();
+
+    /* 近侧手臂：抬起来握住伞柄（不再随迈步摆动） */
+    var shX = 0.04, shY = SHO - 0.02;
+    limb(shX, shY, gripX, gripY, 0.13, 0.10, hoodieHi);
+    joint(gripX, gripY, 0.075, hoodieHi);      /* 手握住伞柄 */
 
     g.restore();
 
