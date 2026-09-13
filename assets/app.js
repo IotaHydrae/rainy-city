@@ -205,20 +205,28 @@
   var walk       = window.RainyWalk;
   var walkBtn    = $('walkBtn');
   var walkExit   = $('walkExit');
-  var walkNav    = $('walkNav');
-  var walkNow    = $('walkNow');
+  var sceneSwitch = $('sceneSwitch');
 
-  function syncWalk() {
-    if (!walk || !walk.isActive()) return;
-    var cur = walk.current();
-    var list = walk.list();
-    if (walkNow && cur) walkNow.textContent = cur.name;
-    if (walkNav) {
-      var btns = walkNav.children;
-      for (var i = 0; i < btns.length; i++) {
-        btns[i].setAttribute('aria-current', String(!!cur && list[i] && list[i].id === cur.id));
-      }
-    }
+  /* 下拉跟随当前场景：漫步 = walk，锁定 = 对应地标 id */
+  function syncSceneSwitch() {
+    if (!sceneSwitch) return;
+    if (!walk || !walk.isActive()) { sceneSwitch.value = 'walk'; return; }
+    sceneSwitch.value = walk.isLocked() ? walk.lockName() : 'walk';
+  }
+
+  /* 测试用：切换并锁定到街景内部的某个场景（后续新场景在这里加分支） */
+  function lockScene(name) {
+    if (!walk) return;
+    if (!walk.isActive()) enterWalk();
+    if (name === 'walk') walk.resume();
+    else walk.focus(name);
+    syncSceneSwitch();
+  }
+
+  if (sceneSwitch) {
+    sceneSwitch.addEventListener('change', function () {
+      lockScene(sceneSwitch.value);
+    });
   }
 
   function enterWalk() {
@@ -226,8 +234,8 @@
     if (document.body.classList.contains('is-immersive')) setImmersive(false);
     document.body.classList.add('is-walking');
     walk.enter();
-    syncWalk();
     if (window.history && history.replaceState) history.replaceState(null, '', '#walk');
+    syncSceneSwitch();
   }
 
   function exitWalk() {
@@ -237,39 +245,35 @@
     if (window.history && history.replaceState) {
       history.replaceState(null, '', location.pathname + location.search);
     }
-  }
-
-  if (walkNav && walk) {
-    walk.list().forEach(function (item, i) {
-      var b = document.createElement('button');
-      b.type = 'button';
-      b.className = 'walk-nav__btn';
-      b.textContent = item.name;
-      b.addEventListener('click', function () {
-        walk.jumpTo(i);
-        syncWalk();
-      });
-      walkNav.appendChild(b);
-    });
+    syncSceneSwitch();
   }
 
   if (walkBtn) walkBtn.addEventListener('click', enterWalk);
   if (walkExit) walkExit.addEventListener('click', exitWalk);
 
-  /* 支持直接用 #walk 打开街景 */
+  /* 支持直接用 #walk 打开街景；再加 ?at=2 可以直接落到第 3 个地点 */
   if (location.hash === '#walk') {
-    window.requestAnimationFrame(function () { enterWalk(); });
+    var at = Number((location.search.match(/[?&]at=(\d+)/) || [])[1]);
+    window.requestAnimationFrame(function () {
+      enterWalk();
+      if (at >= 0) walk.jumpTo(at);
+    });
   }
-
-  /* 走到哪栋楼前面了，HUD 跟着换 */
-  setInterval(function () { if (walk && walk.isActive()) syncWalk(); }, 350);
 
   /* ← → / A D 控制行走方向 */
   function onWalkKey(e, down) {
     if (!walk || !walk.isActive()) return false;
     var k = e.key;
-    if (k === 'ArrowLeft' || k === 'a' || k === 'A') { walk.steer(down ? -1 : 0); return true; }
-    if (k === 'ArrowRight' || k === 'd' || k === 'D') { walk.steer(down ? 1 : 0); return true; }
+    if (k === 'ArrowLeft' || k === 'a' || k === 'A') {
+      walk.steer(down ? -1 : 0);
+      if (down) syncSceneSwitch();     // 手动行走会解除锁定，下拉跟着跳回「漫步」
+      return true;
+    }
+    if (k === 'ArrowRight' || k === 'd' || k === 'D') {
+      walk.steer(down ? 1 : 0);
+      if (down) syncSceneSwitch();
+      return true;
+    }
     return false;
   }
   document.addEventListener('keydown', function (e) { if (onWalkKey(e, true)) e.preventDefault(); });

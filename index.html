@@ -23,15 +23,24 @@
     <div class="walk-hud__title">
       <span class="walk-hud__dot" aria-hidden="true"></span>
       <span class="walk-hud__label">雨城漫步</span>
-      <em id="walkNow">霓虹街区</em>
     </div>
     <button class="chip" id="walkExit" type="button">离开街景</button>
   </header>
 
-  <nav class="walk-nav" id="walkNav" aria-label="跳转到某个地点"></nav>
-
   <p class="walk-hint"><kbd>←</kbd><kbd>→</kbd> 或 <kbd>A</kbd><kbd>D</kbd> 行走　·　<kbd>Esc</kbd> 离开</p>
 </div>
+
+<!-- 测试用：切换街景内部场景（后续加场景时往 select 里加 option 即可） -->
+<label class="scene-switch">
+  <span>测试场景</span>
+  <select id="sceneSwitch" aria-label="测试：切换街景内部场景">
+    <option value="walk">漫步</option>
+    <option value="neon">霓虹街区</option>
+    <option value="store">24 小时便利店</option>
+    <option value="deck">云端观景台</option>
+    <option value="radio">雨夜电台</option>
+  </select>
+</label>
 
 <a class="skip-link" href="#main">跳到主要内容</a>
 

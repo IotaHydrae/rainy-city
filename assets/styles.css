@@ -693,41 +693,7 @@ body.is-walking .walk-hud{ opacity:1; visibility:visible; }
   box-shadow:0 0 12px var(--glow);
 }
 .walk-hud__label{ color:var(--faint); letter-spacing:.2em; font-size:.72rem; }
-.walk-hud__title em{
-  font-style:normal; font-weight:700; font-size:1.02rem;
-  color:var(--text);
-  padding-left:11px; margin-left:2px;
-  border-left:1px solid var(--hairline);
-  text-shadow:0 0 18px rgba(255,221,43,.25);
-}
 .walk-hud__bar .chip{ margin-left:auto; pointer-events:auto; }
-
-.walk-nav{
-  position:absolute;
-  left:var(--pad); bottom:clamp(74px,11vh,98px);
-  display:flex; flex-wrap:wrap; gap:8px;
-}
-.walk-nav__btn{
-  pointer-events:auto;
-  padding:9px 16px;
-  border:1px solid var(--hairline);
-  border-radius:999px;
-  background:rgba(10,16,22,.72);
-  -webkit-backdrop-filter:blur(10px);
-  backdrop-filter:blur(10px);
-  color:var(--muted);
-  font:inherit; font-size:.82rem; letter-spacing:.04em;
-  cursor:pointer;
-  transition:color .22s var(--ease), border-color .22s var(--ease),
-             background-color .22s var(--ease), transform .22s var(--ease);
-}
-.walk-nav__btn:hover{
-  color:var(--text); border-color:var(--hairline-lit); transform:translateY(-2px);
-}
-.walk-nav__btn[aria-current=true]{
-  color:#12181e; background:var(--glow); border-color:var(--glow);
-  box-shadow:0 0 20px rgba(255,221,43,.3);
-}
 
 .walk-hint{
   position:absolute; right:var(--pad); bottom:clamp(30px,5vh,46px);
@@ -748,6 +714,40 @@ body.is-walking .footer,
 body.is-walking .console{
   opacity:0; visibility:hidden;
   transition:opacity .45s var(--ease), visibility .45s;
+}
+
+/* ------------------------------------------ 测试用：场景切换下拉 --- */
+/* 开发期保留：永远浮在最上层，切换后锁定到对应场景方便观察 */
+
+.scene-switch{
+  position:fixed;
+  right:clamp(12px,2vw,24px);
+  bottom:calc(14vh + 20px);
+  z-index:80;
+  display:flex; align-items:center; gap:8px;
+  padding:6px 9px 6px 13px;
+  border:1px solid var(--hairline);
+  border-radius:999px;
+  background:rgba(9,14,20,.84);
+  -webkit-backdrop-filter:blur(10px);
+  backdrop-filter:blur(10px);
+  box-shadow:0 10px 26px rgba(0,0,0,.42);
+  font-size:.72rem; letter-spacing:.05em;
+  color:var(--faint);
+}
+.scene-switch select{
+  border:1px solid var(--hairline);
+  border-radius:8px;
+  background:#1b2430;
+  color:var(--text);
+  font:inherit; font-size:.76rem;
+  padding:4px 8px;
+  cursor:pointer;
+}
+.scene-switch select:hover{ border-color:var(--hairline-lit); }
+
+@media (max-width:620px){
+  .scene-switch{ bottom:calc(20vh + 26px); right:10px; }
 }
 
 /* ------------------------------------------------------------ 响应式 --- */
@@ -788,8 +788,6 @@ body.is-walking .console{
   .stat dd{ font-size:17px; }
   .footer{ padding-bottom:190px; }
 
-  .walk-nav{ left:var(--pad); right:var(--pad); bottom:70px; gap:6px; }
-  .walk-nav__btn{ padding:8px 12px; font-size:.75rem; }
   .walk-hint{ right:auto; left:var(--pad); bottom:32px; font-size:.7rem; }
   .walk-hud__label{ display:none; }
 }
