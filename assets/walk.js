@@ -357,10 +357,11 @@
   }
 
   /* --------------------------------------------------------------- 路灯 --- */
-  /* 灯杆立在人行道靠里的一侧（z 比人物大），所以不会挡住人。 */
+  /* 灯杆立在公路边：人行道最外侧、贴着路缘（z 略大于 KERB_Z）。
+     因为比人物更靠近镜头，绘制时要放在人物之后，让灯杆从他面前掠过。 */
 
-  var LAMP_Z = 5.0;
-  var LAMP_SPACING = 15;
+  var LAMP_Z = 3.45;
+  var LAMP_SPACING = 9;
 
   function drawLamps() {
     var sc = scaleAt(LAMP_Z);
@@ -378,14 +379,14 @@
       hx = x + 0.20 * sc;                  // 灯头朝镜头一侧探出一点
       hy = top + 0.42 * sc;
 
-      /* 地面光斑 */
-      gl = ctx.createRadialGradient(x, gy, 0, x, gy, 3.6 * sc);
+      /* 地面光斑（世界单位 2.4m 半径） */
+      gl = ctx.createRadialGradient(x, gy, 0, x, gy, 2.4 * sc);
       gl.addColorStop(0, 'rgba(255,206,132,.17)');
       gl.addColorStop(0.5, 'rgba(255,196,120,.055)');
       gl.addColorStop(1, 'rgba(255,196,120,0)');
       ctx.fillStyle = gl;
       ctx.beginPath();
-      ctx.ellipse(x, gy, 3.6 * sc, 1.15 * sc, 0, 0, TAU);
+      ctx.ellipse(x, gy, 2.4 * sc, 1.0 * sc, 0, 0, TAU);
       ctx.fill();
 
       /* 灯杆 */
@@ -413,19 +414,19 @@
       ctx.beginPath();
       ctx.moveTo(hx - 0.16 * sc, hy);
       ctx.lineTo(hx + 0.16 * sc, hy);
-      ctx.lineTo(hx + 1.5 * sc, gy);
-      ctx.lineTo(hx - 1.5 * sc, gy);
+      ctx.lineTo(hx + 1.1 * sc, gy);
+      ctx.lineTo(hx - 1.1 * sc, gy);
       ctx.closePath();
       ctx.fill();
 
       /* 灯头的罩与光晕 */
-      gl = ctx.createRadialGradient(hx, hy, 0, hx, hy, 0.85 * sc);
+      gl = ctx.createRadialGradient(hx, hy, 0, hx, hy, 0.7 * sc);
       gl.addColorStop(0, 'rgba(255,240,200,.85)');
       gl.addColorStop(0.3, 'rgba(255,214,150,.35)');
       gl.addColorStop(1, 'rgba(255,205,135,0)');
       ctx.fillStyle = gl;
       ctx.beginPath();
-      ctx.arc(hx, hy, 0.85 * sc, 0, TAU);
+      ctx.arc(hx, hy, 0.7 * sc, 0, TAU);
       ctx.fill();
 
       ctx.fillStyle = 'rgba(255,247,225,.92)';
@@ -1316,9 +1317,6 @@
       drawSpill(x0, x1, baseY, s, slot.spill, 0.75);
     }
 
-    /* 路灯：立在人行道里侧，位于人物之后 */
-    drawLamps();
-
     /* 地标上会动的部分 */
     for (i = 0; i < street.slots.length; i++) {
       slot = street.slots[i];
@@ -1335,6 +1333,10 @@
     }
 
     drawPlayer();
+
+    /* 路灯：贴近路缘、比人物更靠近镜头，从人物前方掠过 */
+    drawLamps();
+
     drawRain();
     drawVignette();
   }
