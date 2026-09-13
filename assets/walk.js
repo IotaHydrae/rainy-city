@@ -436,6 +436,196 @@
     }
   }
 
+  /* --------------------------------------------------------------- 车辆 --- */
+  /* 零星车辆在车行道上双向来往，通常只有一两辆同时在画面里。
+     车在路面上（比路灯和人物都更靠近镜头），所以最后画，从画面里掠过。 */
+
+  var cars = [];
+  var nextCarAt = 0;              // 用 S.now（秒）计时，比累计 dt 可靠
+  var carSeq = 0;                 // 双向交替，保证两个方向都看得到
+
+  function pickCarColor() {
+    var p = ['#202b36', '#262b31', '#2c2020', '#1f2a33', '#3d3130', '#2a3a33', '#c9a227'];
+    return p[Math.floor(Math.random() * p.length)];
+  }
+
+  function spawnCar() {
+    /* 交替来向；每个方向占用一条车道，中间隔一条车道线（z=2.6）：
+       往右走近车道（贴镜头、车大），往左走远车道（靠人行道、车小） */
+    var dir = (carSeq++ % 2 === 0) ? 1 : -1;
+    var z = dir > 0 ? 2.35 + Math.random() * 0.15
+                    : 3.0 + Math.random() * 0.25;
+    var lead = (S.W * 0.75) * z / FOCAL;          // 从视野外进入
+    var speed = (3.0 + Math.random() * 2.4) * dir;
+    var x = dir > 0 ? cam.sx - lead : cam.sx + lead;
+
+    /* 和已经在路上的车保持车距，避免前后追尾叠车 */
+    for (var i = 0; i < cars.length; i++) {
+      if (Math.abs(cars[i].x - x) < 5) return;
+    }
+
+    cars.push({
+      x: x,
+      z: z,
+      dir: dir,
+      speed: speed,
+      len: dir > 0 ? 3.0 + Math.random() * 0.8      // 近车道稍短，不至于太压屏
+                  : 3.4 + Math.random() * 0.8,
+      color: pickCarColor()
+    });
+  }
+
+  function updateCars(dt) {
+    if (S.now >= nextCarAt && cars.length < 2) {
+      spawnCar();
+      nextCarAt = S.now + 3.5 + Math.random() * 5;
+    }
+    for (var i = cars.length - 1; i >= 0; i--) {
+      var c = cars[i];
+      c.x += c.speed * dt;
+      var out = (S.W * 0.9) * c.z / FOCAL;
+      if (Math.abs(c.x - cam.sx) > out) cars.splice(i, 1);
+    }
+  }
+
+  function drawCars() {
+    /* 按深度从远到近排，近车道的车一定压着远车道 —— 反向车交汇时不会穿帮 */
+    var order = cars.slice().sort(function (a, b) { return b.z - a.z; });
+    for (var i = 0; i < order.length; i++) {
+      var c = order[i];
+      var s = scaleAt(c.z);
+      var x = screenX(c.x, c.z);
+      var gy = groundY(c.z);            // 车在路面，不用抬高的行人道面
+      if (x < -s * 6 || x > S.W + s * 6) continue;
+      drawCar(ctx, c, x, gy, s);
+    }
+  }
+
+  /* 侧视小汽车：圆角车体 + 梯形车厢 + 两轮 + 车门线 + 头灯光池/近光 + 尾灯 */
+  function drawCar(g, c, x, gy, s) {
+    var dir = c.dir;
+    var L = c.len * s;
+    var wr = 0.26 * s;                       // 轮半径（贴地）
+    var wcY = gy - wr;                       // 轮心
+    var bodyBot = wcY - 0.04 * s;            // 车体底（略高于轮心）
+    var bodyH = 0.56 * s;
+    var bodyTop = bodyBot - bodyH;
+    var roofTop = bodyTop - 0.46 * s;        // 车顶
+    var rear = x - dir * L / 2;
+    var front = x + dir * L / 2;
+
+    /* 地面投影 */
+    g.fillStyle = 'rgba(0,0,0,.42)';
+    g.beginPath();
+    g.ellipse(x, gy + wr * 0.25, L * 0.5, wr * 0.85, 0, 0, TAU);
+    g.fill();
+
+    /* 车体（圆角）。注意起点：向左开的车 rear 在右边，矩形要从 front 起画 */
+    g.fillStyle = c.color;
+    g.beginPath();
+    g.roundRect(dir > 0 ? rear : front, bodyTop, L, bodyH, Math.min(0.16 * s, L * 0.12));
+    g.fill();
+
+    /* 梯形车厢（前挡风后倾） */
+    var cr = x - dir * L * 0.16;
+    var cf = x + dir * L * 0.22;
+    var cft = x + dir * L * 0.10;
+    g.beginPath();
+    g.moveTo(cr, bodyTop);
+    g.lineTo(cr, roofTop);
+    g.lineTo(cft, roofTop);
+    g.lineTo(cf, bodyTop);
+    g.closePath();
+    g.fill();
+
+    /* 车顶高光 */
+    g.fillStyle = 'rgba(255,255,255,.12)';
+    g.beginPath();
+    g.moveTo(cr + dir * 0.03 * s, roofTop);
+    g.lineTo(cft - dir * 0.03 * s, roofTop);
+    g.lineTo(cft - dir * 0.03 * s, roofTop + 0.04 * s);
+    g.lineTo(cr + dir * 0.03 * s, roofTop + 0.04 * s);
+    g.closePath();
+    g.fill();
+
+    /* 车窗（一道深色玻璃） */
+    g.fillStyle = 'rgba(135,185,215,.55)';
+    g.beginPath();
+    g.moveTo(cr + dir * 0.06 * s, bodyTop + 0.05 * s);
+    g.lineTo(cr + dir * 0.06 * s, roofTop + 0.04 * s);
+    g.lineTo(cft - dir * 0.04 * s, roofTop + 0.04 * s);
+    g.lineTo(cf - dir * 0.04 * s, bodyTop + 0.05 * s);
+    g.closePath();
+    g.fill();
+
+    /* 车轮 */
+    var w1 = x - dir * L * 0.24, w2 = x + dir * L * 0.28;
+    g.fillStyle = '#0b0f14';
+    g.beginPath(); g.arc(w1, wcY, wr, 0, TAU); g.fill();
+    g.beginPath(); g.arc(w2, wcY, wr, 0, TAU); g.fill();
+    g.fillStyle = '#4a545e';
+    g.beginPath(); g.arc(w1, wcY, wr * 0.5, 0, TAU); g.fill();
+    g.beginPath(); g.arc(w2, wcY, wr * 0.5, 0, TAU); g.fill();
+
+    /* 车门线 */
+    g.strokeStyle = 'rgba(0,0,0,.35)';
+    g.lineWidth = Math.max(1, 0.02 * s);
+    g.beginPath();
+    g.moveTo(x - dir * 0.05 * s, bodyTop + 0.04 * s);
+    g.lineTo(x - dir * 0.05 * s, bodyBot - 0.04 * s);
+    g.stroke();
+
+    /* 车灯位置 */
+    var hlY = bodyTop + 0.10 * s;
+    var tlX = rear + dir * 0.02 * s;
+
+    /* 头灯在前方路面上照出的光池 */
+    var poolCX = front + dir * 1.8 * s;
+    var poolR = 1.5 * s;
+    var pg = g.createRadialGradient(poolCX, gy - 0.1 * s, 0, poolCX, gy - 0.1 * s, poolR);
+    pg.addColorStop(0, 'rgba(255,232,170,.22)');
+    pg.addColorStop(0.6, 'rgba(255,225,160,.08)');
+    pg.addColorStop(1, 'rgba(255,225,160,0)');
+    g.fillStyle = pg;
+    g.beginPath();
+    g.ellipse(poolCX, gy - 0.1 * s, poolR, poolR * 0.4, 0, 0, TAU);
+    g.fill();
+
+    /* 淡淡的近光锥 */
+    var beam = g.createLinearGradient(front, 0, front + dir * 3.0 * s, 0);
+    beam.addColorStop(0, 'rgba(255,226,160,.13)');
+    beam.addColorStop(1, 'rgba(255,226,160,0)');
+    g.fillStyle = beam;
+    g.beginPath();
+    g.moveTo(front, hlY - 0.04 * s);
+    g.lineTo(front, hlY + 0.08 * s);
+    g.lineTo(front + dir * 3.0 * s, gy - 0.06 * s);
+    g.lineTo(front + dir * 3.0 * s, gy + 0.08 * s);
+    g.closePath();
+    g.fill();
+
+    /* 车头灯（暖白小方块）与尾灯（红） */
+    g.fillStyle = '#ffe9b8';
+    g.fillRect(dir > 0 ? front - 0.05 * s : front, hlY, Math.max(1.5, 0.05 * s), 0.12 * s);
+    g.fillStyle = '#ff4444';
+    g.fillRect(dir > 0 ? tlX - 0.04 * s : tlX, hlY, Math.max(1.5, 0.05 * s), 0.12 * s);
+
+    /* 尾灯红光拖尾 */
+    var tg = g.createRadialGradient(tlX, hlY, 0, tlX, hlY, 0.45 * s);
+    tg.addColorStop(0, 'rgba(255,70,70,.30)');
+    tg.addColorStop(1, 'rgba(255,70,70,0)');
+    g.fillStyle = tg;
+    g.beginPath();
+    g.arc(tlX, hlY, 0.45 * s, 0, TAU);
+    g.fill();
+
+    /* 出租车顶灯 */
+    if (c.color === '#c9a227') {
+      g.fillStyle = '#ffe08a';
+      g.fillRect(x - dir * 0.06 * s, roofTop - 0.18 * s, 0.62 * s, 0.14 * s);
+    }
+  }
+
   /* --------------------------------------------------------------- 暗角 --- */
 
   function drawVignette() {
@@ -1337,6 +1527,9 @@
     /* 路灯：贴近路缘、比人物更靠近镜头，从人物前方掠过 */
     drawLamps();
 
+    /* 车辆：在路面上、比路灯和人物都更靠近镜头，最后掠过 */
+    drawCars();
+
     drawRain();
     drawVignette();
   }
@@ -1384,6 +1577,7 @@
     cam.sx = cam.x;
 
     updateRain(dt);
+    updateCars(dt);
     draw();
 
     /* 雷闪时整体提亮一点，和底下的主场景对上 */
@@ -1542,6 +1736,9 @@
         phase: +player.phase.toFixed(3),
         now: +S.now.toFixed(3),
         drops: drops.length,
+        cars: cars.length,
+        carDirs: cars.map(function (c) { return c.dir; }).join(','),
+        carLanes: cars.map(function (c) { return +c.z.toFixed(2); }).join(','),
         visible: +visibleUnits().toFixed(2)
       };
     }

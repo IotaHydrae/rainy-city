@@ -24,7 +24,8 @@ f.onload = function () {
     shots.push({ tag: tag, len: len, s: s });
     log.push(tag.padEnd(14) + ' running=' + s.running +
              ' x=' + s.x + ' cam=' + s.cam + ' phase=' + s.phase +
-             ' now=' + s.now + ' drops=' + s.drops + ' len=' + len);
+             ' now=' + s.now + ' drops=' + s.drops + ' cars=' + s.cars +
+             ' dirs=[' + s.carDirs + '] lanes=[' + s.carLanes + '] len=' + len);
   }
 
   setTimeout(function () {
