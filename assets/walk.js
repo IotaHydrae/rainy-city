@@ -26,15 +26,16 @@
   var FOCAL        = 520;    // 焦距（像素）
   var CAM_H        = 1.6;    // 相机离地高度（世界单位）
   var FACADE_Z     = 6.0;    // 店面所在的深度
-  var SIDEWALK_Z   = 1.65;   // 人行道离镜头最近的深度
-  var PLAYER_Z     = 3.0;    // 人物行走的深度
+  var KERB_Z       = 3.4;    // 路缘石：人行道从这里往里算
+  var ROAD_NEAR_Z  = 1.75;   // 画面里最近的沥青
+  var PLAYER_Z     = 3.9;    // 人物行走的深度（在人行道上，靠近路缘）
   var TILE         = 0.9;    // 人行道砖的边长（世界单位）
   var LEAD         = 0.115;  // 人物偏左的比例，右边留出更多街道
 
   var C = {
     pave:      '#161d25',
     paveLit:   '#1d2731',
-    joint:     'rgba(140,180,215,.10)',
+    joint:     'rgba(150,190,220,.055)',
     curb:      '#334454',
     facade:    '#0c1219',
     facade2:   '#0f1720',
@@ -59,7 +60,8 @@
   };
 
   var cam = { x: 0, sx: 0 };
-  var player = { x: 0, z: PLAYER_Z, dir: 1, speed: 1.35, phase: 0, steer: 0 };
+  var player = { x: 0, z: PLAYER_Z, dir: 1, speed: 1.35, phase: 0, steer: 0,
+                 locked: false, lockId: null };
   var street = { slots: [], length: 0, start: 0 };
   var marks = [];        // 四栋地标的世界坐标
   var drops = [];
@@ -84,27 +86,49 @@
   function scaleAt(z) { return FOCAL / z; }
   function screenX(worldX, z) { return S.W * 0.5 + (worldX - cam.sx) * FOCAL / z; }
 
+  /* 人行道面比路面高出一截（路缘约 12cm）。
+     行人、建筑基座、路灯、人行道上的水洼都站在这个抬高的面上。 */
+  var CURB_H = 0.12;
+  function sideY(z) { return groundY(z) - CURB_H * scaleAt(z); }
+
+  /* 店面基座往上，画面里还能容纳多少个世界单位。
+     推导：基座在 horizon + FOCAL*CAM_H/FACADE_Z，缩放是 FOCAL/FACADE_Z，
+     相除即得；再扣掉人行道高出路面的那 12cm。 */
+  function visibleUnits() {
+    return S.horizon * FACADE_Z / FOCAL + CAM_H - CURB_H;
+  }
+
   /* --------------------------------------------------------------- 街道 --- */
 
+  /* 招牌全部安排在基座往上 0–5.2 单位之内：
+     1000px 高的视口能看到约 6.9 单位，700px 只有约 5.3 单位，
+     再高就会被顶出画面。 */
   var LANDMARKS = [
     { id: 'neon',  name: '霓虹街区',      w: 10.0, h: 13.0, draw: drawNeon,  anim: animNeon },
-    { id: 'store', name: '24 小时便利店', w: 8.4,  h: 5.0,  draw: drawStore, anim: animStore },
+    { id: 'store', name: '24 小时便利店', w: 8.4,  h: 4.4,  draw: drawStore, anim: animStore },
     { id: 'deck',  name: '云端观景台',    w: 9.0,  h: 15.0, draw: drawDeck,  anim: animDeck },
-    { id: 'radio', name: '雨夜电台',      w: 9.2,  h: 4.8,  draw: drawRadio, anim: animRadio }
+    { id: 'radio', name: '雨夜电台',      w: 9.2,  h: 4.4,  draw: drawRadio, anim: animRadio }
   ];
 
   function buildStreet() {
     var rnd = mulberry32(20260301);
     var slots = [], x = 0, li = 0, i;
 
+    /* 地标顺序每次加载随机打乱（建筑轮廓仍用固定种子，保持统一） */
+    var order = LANDMARKS.slice();
+    for (i = order.length - 1; i > 0; i--) {
+      var oj = Math.floor(Math.random() * (i + 1));
+      var t = order[i]; order[i] = order[oj]; order[oj] = t;
+    }
+
     for (i = 0; i < 27; i++) {
       if (i % 3 === 0) {
-        var lm = LANDMARKS[li % LANDMARKS.length];
+        var lm = order[li % order.length];
         li++;
         slots.push({
           kind: 'landmark', def: lm, x: x, w: lm.w, h: lm.h,
           seed: Math.floor(rnd() * 1e6),
-          lit: true, flash: 0, vu: [0, 0, 0, 0, 0]
+          lit: true, flash: 0
         });
         x += lm.w;
       } else {
@@ -137,7 +161,7 @@
     for (var i = 0; i < 26; i++) {
       puddles.push({
         x: rnd() * street.length,
-        z: SIDEWALK_Z + 0.5 + rnd() * (FACADE_Z - SIDEWALK_Z - 0.8),
+        z: ROAD_NEAR_Z + 0.35 + rnd() * (FACADE_Z - ROAD_NEAR_Z - 0.9),
         r: 0.7 + rnd() * 1.9,
         seed: rnd() * TAU
       });
@@ -181,7 +205,7 @@
 
     /* 地面溅起的小水花 */
     if (Math.random() < dt * 26 && splashes.length < 70) {
-      var z = SIDEWALK_Z + Math.random() * (FACADE_Z - SIDEWALK_Z);
+      var z = ROAD_NEAR_Z + 0.3 + Math.random() * (FACADE_Z - ROAD_NEAR_Z - 0.5);
       splashes.push({ x: cam.sx + (Math.random() - 0.5) * 16, z: z, t: 0, life: 0.4 + Math.random() * 0.3 });
     }
     for (i = splashes.length - 1; i >= 0; i--) {
@@ -210,7 +234,7 @@
       var sp = splashes[i];
       var k = sp.t / sp.life;
       var x = screenX(sp.x, sp.z);
-      var y = groundY(sp.z);
+      var y = sp.z < KERB_Z ? groundY(sp.z) : sideY(sp.z);
       var r = (0.06 + k * 0.22) * scaleAt(sp.z);
       if (x < -60 || x > S.W + 60) continue;
       ctx.globalAlpha = (1 - k) * 0.35;
@@ -223,78 +247,102 @@
     ctx.globalAlpha = 1;
   }
 
-  /* ------------------------------------------------------------ 人行道 --- */
+  /* --------------------------------------------------------------- 地面 --- */
+  /* 路面与抬高的人行道面之间有一段可见的路缘立面（约 12cm），
+     人行道只有 KERB_Z..FACADE_Z 这么宽，剩下的都给湿沥青。 */
 
-  function drawSidewalk() {
-    var zN = SIDEWALK_Z, zF = FACADE_Z;
-    var yN = groundY(zN), yF = groundY(zF);
-    var i, z, y, x1, x2, k;
+  function drawGround() {
+    var yRoad = groundY(KERB_Z);       /* 路缘处：路面 */
+    var ySide = sideY(KERB_Z);         /* 路缘处：人行道面（高 12cm） */
+    var yFar  = sideY(FACADE_Z);       /* 店面基座：站在人行道面上 */
+    var i, z, y, k, gg, p, pz, px, py, rx, ry, wx;
 
-    var g = ctx.createLinearGradient(0, yF, 0, S.H);
-    g.addColorStop(0, '#1b2430');
-    g.addColorStop(0.45, C.pave);
-    g.addColorStop(1, '#10161d');
-    ctx.fillStyle = g;
-    ctx.fillRect(0, yF, S.W, S.H - yF + 2);
+    /* --- 车行道 --- */
+    var road = ctx.createLinearGradient(0, yRoad, 0, S.H);
+    road.addColorStop(0, '#0c1117');
+    road.addColorStop(0.45, '#101620');
+    road.addColorStop(1, '#090d13');
+    ctx.fillStyle = road;
+    ctx.fillRect(0, yRoad, S.W, S.H - yRoad + 2);
 
-    /* 铺装：横向砖缝（等距深度 → 天然透视疏密） */
-    ctx.strokeStyle = C.joint;
+    /* 湿沥青上的横向水光 */
+    ctx.strokeStyle = 'rgba(150,190,225,.05)';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    for (z = zN; z <= zF; z += 0.16) {
+    for (z = KERB_Z; z > ROAD_NEAR_Z; z -= 0.16) {
       y = groundY(z);
       ctx.moveTo(0, y);
       ctx.lineTo(S.W, y);
     }
     ctx.stroke();
 
-    /* 纵向砖缝：等距世界坐标 → 全部汇聚到灭点 */
+    /* 一条车道边线 */
+    ctx.fillStyle = 'rgba(205,218,230,.13)';
+    ctx.fillRect(0, groundY(2.6) - 1, S.W, 2);
+
+    /* --- 路缘立面：路面到人行道面之间那 12cm --- */
+    ctx.fillStyle = '#333e4a';
+    ctx.fillRect(0, ySide, S.W, yRoad - ySide + 1);
+    /* 路缘顶边被照亮的一条 */
+    ctx.fillStyle = 'rgba(255,255,255,.24)';
+    ctx.fillRect(0, ySide, S.W, 2);
+    /* 路缘底部的阴影 */
+    ctx.fillStyle = 'rgba(0,0,0,.45)';
+    ctx.fillRect(0, yRoad - 2, S.W, 2);
+
+    /* --- 人行道面（抬高 12cm，砖缝按这个面投影） --- */
+    var walkG = ctx.createLinearGradient(0, yFar, 0, ySide);
+    walkG.addColorStop(0, '#181e26');
+    walkG.addColorStop(1, '#131920');
+    ctx.fillStyle = walkG;
+    ctx.fillRect(0, yFar, S.W, ySide - yFar + 2);
+
+    ctx.strokeStyle = C.joint;
+    ctx.lineWidth = 1;
     ctx.beginPath();
-    var from = Math.floor((cam.sx - 20) / TILE) * TILE;
-    for (var wx = from; wx < cam.sx + 20; wx += TILE) {
-      x1 = screenX(wx, zN);
-      x2 = screenX(wx, zF);
-      ctx.moveTo(x1, yN);
-      ctx.lineTo(x2, yF);
+    for (z = KERB_Z; z <= FACADE_Z; z += 0.13) {
+      y = sideY(z);
+      ctx.moveTo(0, y);
+      ctx.lineTo(S.W, y);
     }
     ctx.stroke();
 
-    /* 路缘石 */
-    ctx.fillStyle = C.curb;
-    ctx.fillRect(0, yF - 3, S.W, 3);
-    ctx.globalAlpha = 0.5;
-    ctx.fillStyle = '#0a0f14';
-    ctx.fillRect(0, yF + 1, S.W, 5);
-    ctx.globalAlpha = 1;
+    ctx.beginPath();
+    var from = Math.floor((cam.sx - 20) / TILE) * TILE;
+    for (wx = from; wx < cam.sx + 20; wx += TILE) {
+      ctx.moveTo(screenX(wx, KERB_Z), ySide);
+      ctx.lineTo(screenX(wx, FACADE_Z), yFar);
+    }
+    ctx.stroke();
 
-    /* 靠墙一侧的积水反光带 */
-    var wall = ctx.createLinearGradient(0, yF, 0, yF + (yN - yF) * 0.45);
-    wall.addColorStop(0, 'rgba(150,200,240,.10)');
+    /* 靠墙一侧的潮湿高光 */
+    var wall = ctx.createLinearGradient(0, yFar, 0, ySide);
+    wall.addColorStop(0, 'rgba(150,200,240,.08)');
     wall.addColorStop(1, 'rgba(150,200,240,0)');
     ctx.fillStyle = wall;
-    ctx.fillRect(0, yF, S.W, (yN - yF) * 0.45);
+    ctx.fillRect(0, yFar, S.W, ySide - yFar);
 
-    /* 水洼 */
+    /* --- 水洼：人行道上的画在高面上，车行道上的画在路面上 --- */
     for (i = 0; i < puddles.length; i++) {
-      var p = puddles[i];
-      var pz = p.z;
-      var px = screenX(p.x, pz);
-      var s = scaleAt(pz);
-      var rx = p.r * s;
+      p = puddles[i];
+      pz = p.z;
+      px = screenX(p.x, pz);
+      var sc = scaleAt(pz);
+      rx = p.r * sc;
       if (px + rx < -40 || px - rx > S.W + 40) continue;
-      var py = groundY(pz);
-      var ry = p.r * s * 0.30;
-      var gg = ctx.createRadialGradient(px, py, 0, px, py, rx);
-      gg.addColorStop(0, 'rgba(190,225,250,.16)');
-      gg.addColorStop(0.7, 'rgba(150,195,235,.07)');
+      py = pz < KERB_Z ? groundY(pz) : sideY(pz);
+      ry = p.r * sc * 0.30;
+
+      gg = ctx.createRadialGradient(px, py, 0, px, py, rx);
+      gg.addColorStop(0, 'rgba(190,225,250,.14)');
+      gg.addColorStop(0.7, 'rgba(150,195,235,.06)');
       gg.addColorStop(1, 'rgba(140,185,225,0)');
       ctx.fillStyle = gg;
       ctx.beginPath();
       ctx.ellipse(px, py, rx, ry, 0, 0, TAU);
       ctx.fill();
 
-      /* 水面上抖动的反光 */
-      ctx.globalAlpha = 0.16;
+      ctx.globalAlpha = 0.14;
       ctx.strokeStyle = '#cfe8ff';
       ctx.lineWidth = 1;
       ctx.beginPath();
@@ -308,13 +356,106 @@
     }
   }
 
+  /* --------------------------------------------------------------- 路灯 --- */
+  /* 灯杆立在人行道靠里的一侧（z 比人物大），所以不会挡住人。 */
+
+  var LAMP_Z = 5.0;
+  var LAMP_SPACING = 15;
+
+  function drawLamps() {
+    var sc = scaleAt(LAMP_Z);
+    var gy = sideY(LAMP_Z);           /* 灯杆立在抬高的行人道上 */
+    var hLamp = 3.7;                       // 灯杆高度（世界单位）
+    var first = Math.floor((cam.sx - 14) / LAMP_SPACING) * LAMP_SPACING;
+    var x, top, pw, hx, hy, gl, cone;
+
+    for (var wx = first; wx < cam.sx + 30; wx += LAMP_SPACING) {
+      x = screenX(wx, LAMP_Z);
+      if (x < -160 || x > S.W + 160) continue;
+
+      top = gy - hLamp * sc;
+      pw = Math.max(3, 0.085 * sc);
+      hx = x + 0.20 * sc;                  // 灯头朝镜头一侧探出一点
+      hy = top + 0.42 * sc;
+
+      /* 地面光斑 */
+      gl = ctx.createRadialGradient(x, gy, 0, x, gy, 3.6 * sc);
+      gl.addColorStop(0, 'rgba(255,206,132,.17)');
+      gl.addColorStop(0.5, 'rgba(255,196,120,.055)');
+      gl.addColorStop(1, 'rgba(255,196,120,0)');
+      ctx.fillStyle = gl;
+      ctx.beginPath();
+      ctx.ellipse(x, gy, 3.6 * sc, 1.15 * sc, 0, 0, TAU);
+      ctx.fill();
+
+      /* 灯杆 */
+      ctx.strokeStyle = '#1f2833';
+      ctx.lineWidth = pw;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(x, gy);
+      ctx.lineTo(x, top + 0.1 * sc);
+      ctx.stroke();
+
+      /* 灯臂 */
+      ctx.lineWidth = pw * 0.72;
+      ctx.beginPath();
+      ctx.moveTo(x, top + 0.2 * sc);
+      ctx.quadraticCurveTo(x + 0.16 * sc, top + 0.08 * sc, hx, hy);
+      ctx.stroke();
+
+      /* 向下的一束光 */
+      cone = ctx.createLinearGradient(0, hy, 0, gy);
+      cone.addColorStop(0, 'rgba(255,210,140,.15)');
+      cone.addColorStop(0.55, 'rgba(255,206,132,.05)');
+      cone.addColorStop(1, 'rgba(255,206,132,0)');
+      ctx.fillStyle = cone;
+      ctx.beginPath();
+      ctx.moveTo(hx - 0.16 * sc, hy);
+      ctx.lineTo(hx + 0.16 * sc, hy);
+      ctx.lineTo(hx + 1.5 * sc, gy);
+      ctx.lineTo(hx - 1.5 * sc, gy);
+      ctx.closePath();
+      ctx.fill();
+
+      /* 灯头的罩与光晕 */
+      gl = ctx.createRadialGradient(hx, hy, 0, hx, hy, 0.85 * sc);
+      gl.addColorStop(0, 'rgba(255,240,200,.85)');
+      gl.addColorStop(0.3, 'rgba(255,214,150,.35)');
+      gl.addColorStop(1, 'rgba(255,205,135,0)');
+      ctx.fillStyle = gl;
+      ctx.beginPath();
+      ctx.arc(hx, hy, 0.85 * sc, 0, TAU);
+      ctx.fill();
+
+      ctx.fillStyle = 'rgba(255,247,225,.92)';
+      ctx.beginPath();
+      ctx.ellipse(hx, hy, 0.105 * sc, 0.08 * sc, 0, 0, TAU);
+      ctx.fill();
+    }
+  }
+
+  /* --------------------------------------------------------------- 暗角 --- */
+
+  function drawVignette() {
+    var g = ctx.createRadialGradient(
+      S.W * 0.5, S.H * 0.5, S.H * 0.20,
+      S.W * 0.5, S.H * 0.5, S.H * 0.98
+    );
+    g.addColorStop(0, 'rgba(3,6,10,0)');
+    g.addColorStop(0.55, 'rgba(3,6,10,.34)');
+    g.addColorStop(1, 'rgba(3,6,10,.80)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, S.W, S.H);
+  }
+
   /* 招牌灯光打在人行道上的倒影 */
   function drawSpill(x0, x1, baseY, s, color, strength) {
     var w = x1 - x0;
     var h = (baseY - groundY(FACADE_Z)) + (S.H - baseY) * 0.8;
     var g = ctx.createLinearGradient(0, baseY, 0, baseY + h);
-    g.addColorStop(0, hexA(color, 0.22 * strength));
-    g.addColorStop(0.45, hexA(color, 0.07 * strength));
+    g.addColorStop(0, hexA(color, 0.14 * strength));
+    g.addColorStop(0.4, hexA(color, 0.045 * strength));
     g.addColorStop(1, hexA(color, 0));
     ctx.fillStyle = g;
     ctx.fillRect(x0, baseY, w, h);
@@ -442,56 +583,64 @@
     ctx.fillStyle = 'rgba(0,0,0,.45)';
     for (var px = x0; px < x1; px += 3.2 * s) ctx.fillRect(px, top, 2, baseY - top);
 
-    windows(x0, x1, top, baseY - 5.6 * s, s, rnd, { lit: 0.5, pitchX: 1.3, pitchY: 1.5, w: 0.7, h: 0.85 });
+    /* 上层窗格（屏幕够高时才看得到） */
+    windows(x0, x1, baseY - 6.5 * s, baseY - 5.15 * s, s, rnd,
+            { lit: 0.5, pitchX: 1.3, pitchY: 1.15, w: 0.68, h: 0.7, padX: 0.7, top: 0.12 });
 
-    /* 底层店铺：暖光橱窗 */
-    var shopTop = baseY - 3.1 * s;
+    /* 底层店铺：一排暖光橱窗 */
+    var shopTop = baseY - 2.85 * s;
     ctx.fillStyle = '#0a0f15';
     ctx.fillRect(x0, shopTop, w, baseY - shopTop);
     for (var i = 0; i < 4; i++) {
-      var bx = x0 + (0.5 + i * 2.3) * s;
-      var bw = 1.7 * s;
+      var bx = x0 + (0.45 + i * 2.35) * s;
+      var bw = 1.75 * s;
       if (bx + bw > x1 - 0.3 * s) break;
       var gg = ctx.createLinearGradient(0, shopTop, 0, baseY);
-      gg.addColorStop(0, 'rgba(255,206,120,.55)');
-      gg.addColorStop(1, 'rgba(255,150,60,.18)');
+      gg.addColorStop(0, 'rgba(255,206,120,.34)');
+      gg.addColorStop(1, 'rgba(255,150,60,.10)');
       ctx.fillStyle = gg;
-      ctx.fillRect(bx, shopTop + 0.6 * s, bw, 2.1 * s);
+      ctx.fillRect(bx, shopTop + 0.5 * s, bw, 2.1 * s);
       ctx.fillStyle = 'rgba(10,14,20,.85)';
-      ctx.fillRect(bx + bw * 0.42, shopTop + 0.6 * s, 3, 2.1 * s);
+      ctx.fillRect(bx + bw * 0.44, shopTop + 0.5 * s, 3, 2.1 * s);
     }
 
-    /* 霓虹招牌：粉色横匾 */
-    var sy = baseY - 4.4 * s;
-    var sh = 1.3 * s;
+    /* 店招：中间一块粉色霓虹横匾，两边挂竖灯箱 */
+    var sh = 1.15 * s;
+    var sy = baseY - 4.3 * s;
+    var fbL = x0 + 2.5 * s, fbR = x1 - 2.5 * s;
+    slot.fascia = { l: fbL, r: fbR, y: sy, h: sh };
     ctx.fillStyle = 'rgba(8,12,18,.94)';
-    ctx.fillRect(x0 + 0.7 * s, sy, w - 1.4 * s, sh);
+    ctx.fillRect(fbL, sy, fbR - fbL, sh);
     ctx.strokeStyle = hexA(C.neonPink, 0.85);
     ctx.lineWidth = 2;
-    ctx.strokeRect(x0 + 0.7 * s + 1, sy + 1, w - 1.4 * s - 2, sh - 2);
-    glowText('霓 虹 街 区', (x0 + x1) / 2, sy + sh * 0.54, Math.round(0.82 * s), C.neonPink, 'center', 0.9 * s);
+    ctx.strokeRect(fbL + 1, sy + 1, fbR - fbL - 2, sh - 2);
+    glowText('霓虹街区', (fbL + fbR) / 2, sy + sh * 0.54,
+             Math.round(0.66 * s), C.neonPink, 'center', 0.9 * s);
 
-    /* 竖挂霓虹灯箱 */
     var cols = [C.neonCyan, C.neonAmber, C.neonGreen];
-    var chars = ['霓', '虹', '街'];
-    for (var v = 0; v < 3; v++) {
-      var vx = x0 + (1.6 + v * 3.0) * s;
-      var vy = baseY - (7.4 + v * 1.6) * s;
-      if (vx + 0.9 * s > x1) break;
+    /* 两块竖灯箱挂在横匾两侧，高度控制在可见范围内 */
+    var spots = [
+      { x: x0 + 0.5 * s,  y: 5.0, h: 2.4, ch: '霓', col: cols[0] },
+      { x: x1 - 1.35 * s, y: 5.0, h: 2.4, ch: '街', col: cols[2] }
+    ];
+    for (var v = 0; v < spots.length; v++) {
+      var sp = spots[v];
+      var vy = baseY - sp.y * s;
       ctx.fillStyle = 'rgba(6,10,15,.9)';
-      ctx.fillRect(vx, vy, 0.9 * s, 2.6 * s);
-      ctx.strokeStyle = hexA(cols[v], 0.9);
+      ctx.fillRect(sp.x, vy, 0.85 * s, sp.h * s);
+      ctx.strokeStyle = hexA(sp.col, 0.9);
       ctx.lineWidth = 1.5;
-      ctx.strokeRect(vx + 1, vy + 1, 0.9 * s - 2, 2.6 * s - 2);
-      glowText(chars[v], vx + 0.45 * s, vy + 1.3 * s, Math.round(0.5 * s), cols[v], 'center', 0.5 * s);
+      ctx.strokeRect(sp.x + 1, vy + 1, 0.85 * s - 2, sp.h * s - 2);
+      glowText(sp.ch, sp.x + 0.425 * s, vy + sp.h * 0.5 * s,
+               Math.round(0.46 * s), sp.col, 'center', 0.5 * s);
     }
 
     /* 檐口霓虹灯管 */
     ctx.strokeStyle = hexA(C.neonCyan, 0.75);
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(x0 + 3, baseY - 3.25 * s);
-    ctx.lineTo(x1 - 3, baseY - 3.25 * s);
+    ctx.moveTo(x0 + 3, baseY - 3.0 * s);
+    ctx.lineTo(x1 - 3, baseY - 3.0 * s);
     ctx.stroke();
 
     slot.spill = C.neonPink;
@@ -504,10 +653,11 @@
       slot.lit = !slot.lit;
       if (!slot.lit && Math.random() < 0.6) slot.flash = S.now + 0.3 + Math.random() * 2.4;
     }
-    if (!slot.lit) {
-      ctx.globalAlpha = 0.55;
-      ctx.fillStyle = 'rgba(8,12,18,.9)';
-      ctx.fillRect(x0 + 0.7 * s, baseY - 4.4 * s, x1 - x0 - 1.4 * s, 1.3 * s);
+    var f = slot.fascia;
+    if (!slot.lit && f) {
+      ctx.globalAlpha = 0.6;
+      ctx.fillStyle = 'rgba(8,12,18,.92)';
+      ctx.fillRect(f.l, f.y, f.r - f.l, f.h);
       ctx.globalAlpha = 1;
     }
   }
@@ -519,11 +669,11 @@
     var top = shell(x0, x1, baseY, s, slot.h, '#131a22', '#1a232c');
 
     /* 玻璃门面：里面是亮的 */
-    var gTop = baseY - 3.5 * s;
+    var gTop = baseY - 3.2 * s;
     var gg = ctx.createLinearGradient(0, gTop, 0, baseY);
-    gg.addColorStop(0, '#fff3d6');
-    gg.addColorStop(0.55, '#ffe2ae');
-    gg.addColorStop(1, '#e8c98d');
+    gg.addColorStop(0, '#f0e2c2');
+    gg.addColorStop(0.55, '#dcc192');
+    gg.addColorStop(1, '#c0a275');
     ctx.fillStyle = gg;
     ctx.fillRect(x0 + 0.35 * s, gTop, w - 0.7 * s, baseY - gTop - 0.25 * s);
 
@@ -556,8 +706,8 @@
     ctx.fillRect(dx + 1.1 * s, gTop + 0.3 * s, 0.9 * s, baseY - gTop - 0.7 * s);
 
     /* 招牌横带 */
-    var fy = baseY - 4.5 * s;
-    var fh = 0.95 * s;
+    var fy = baseY - 4.25 * s;
+    var fh = 0.85 * s;
     ctx.fillStyle = '#f4f6f2';
     ctx.fillRect(x0 + 0.2 * s, fy, w - 0.4 * s, fh);
     ctx.fillStyle = '#2f9e5e';
@@ -585,11 +735,11 @@
     ctx.fillRect(x0 + 2.4 * s, top - 0.4 * s, 0.8 * s, 0.4 * s);
     var lbx = x1 - 2.6 * s;
     ctx.fillStyle = 'rgba(10,16,22,.95)';
-    ctx.fillRect(lbx, top - 1.1 * s, 1.5 * s, 1.1 * s);
+    ctx.fillRect(lbx, top - 0.85 * s, 1.5 * s, 0.85 * s);
     ctx.strokeStyle = hexA(C.neonGreen, 0.9);
     ctx.lineWidth = 2;
-    ctx.strokeRect(lbx + 1, top - 1.1 * s + 1, 1.5 * s - 2, 1.1 * s - 2);
-    glowText('24', lbx + 0.75 * s, top - 0.52 * s, Math.round(0.6 * s), C.neonGreen, 'center', 0.5 * s);
+    ctx.strokeRect(lbx + 1, top - 0.85 * s + 1, 1.5 * s - 2, 0.85 * s - 2);
+    glowText('24', lbx + 0.75 * s, top - 0.42 * s, Math.round(0.5 * s), C.neonGreen, 'center', 0.5 * s);
 
     /* 门口杂物：自动售货机、垃圾桶 */
     ctx.fillStyle = '#0d1a26';
@@ -606,7 +756,7 @@
     /* 顶灯轻微呼吸 */
     ctx.globalAlpha = 0.06 + 0.05 * (0.5 + 0.5 * Math.sin(S.now * 2.4 + slot.seed));
     ctx.fillStyle = '#fff6dd';
-    ctx.fillRect(x0 + 0.35 * s, baseY - 3.5 * s, x1 - x0 - 0.7 * s, 3.25 * s);
+    ctx.fillRect(x0 + 0.35 * s, baseY - 3.2 * s, x1 - x0 - 0.7 * s, 2.95 * s);
     ctx.globalAlpha = 1;
   }
 
@@ -639,7 +789,7 @@
     ctx.fillRect(x0, ey, w, 3.3 * s);
     ctx.fillStyle = '#0a1017';
     ctx.fillRect(x0, baseY - 2.4 * s, w, 2.4 * s);
-    ctx.fillStyle = 'rgba(190,235,255,.5)';
+    ctx.fillStyle = 'rgba(190,235,255,.32)';
     ctx.fillRect(x0 + 0.4 * s, baseY - 2.35 * s, w - 0.8 * s, 1.5 * s);
     ctx.fillStyle = 'rgba(10,16,24,.75)';
     ctx.fillRect(x0 + w * 0.44, baseY - 2.35 * s, 2, 2.35 * s);
@@ -651,11 +801,11 @@
     ctx.fillRect(x0 + 0.3 * s, ey - 0.08 * s, w - 0.6 * s, 3);
 
     /* 门楣招牌 */
-    glowText('云端观景台', (x0 + x1) / 2, ey - 1.15 * s, Math.round(0.72 * s), C.neonCyan, 'center', 0.7 * s);
-    glowText('68F', (x0 + x1) / 2, ey - 1.95 * s, Math.round(0.46 * s), '#bde8ff', 'center', 0.4 * s);
+    glowText('云端观景台', (x0 + x1) / 2, ey - 0.95 * s, Math.round(0.66 * s), C.neonCyan, 'center', 0.7 * s);
+    glowText('68F', (x0 + x1) / 2, ey - 1.68 * s, Math.round(0.42 * s), '#bde8ff', 'center', 0.4 * s);
 
     /* 云朵 logo */
-    var cx = x0 + w * 0.5, cy = baseY - 6.1 * s, cr = 0.4 * s;
+    var cx = x0 + w * 0.5, cy = baseY - 5.05 * s, cr = 0.34 * s;
     ctx.fillStyle = hexA(C.neonCyan, 0.85);
     ctx.beginPath();
     ctx.arc(cx - cr * 0.9, cy, cr * 0.72, 0, TAU);
@@ -663,8 +813,9 @@
     ctx.arc(cx + cr * 1.0, cy, cr * 0.66, 0, TAU);
     ctx.fill();
 
-    /* 观光电梯井 */
-    slot.shaft = { x: x1 - 2.3 * s, w: 1.9 * s, top: baseY - 9.6 * s, bottom: baseY - 3.3 * s };
+    /* 观光电梯井：高度压到画面之内，好让轿厢一直看得见 */
+    var shaftTop = Math.min(9.6, visibleUnits() - 0.15);
+    slot.shaft = { x: x1 - 2.3 * s, w: 1.9 * s, top: baseY - shaftTop * s, bottom: baseY - 3.3 * s };
     ctx.fillStyle = 'rgba(8,14,20,.85)';
     ctx.fillRect(slot.shaft.x, slot.shaft.top, slot.shaft.w, slot.shaft.bottom - slot.shaft.top);
     ctx.strokeStyle = 'rgba(120,215,255,.45)';
@@ -689,7 +840,7 @@
     var a = 0.10 + 0.10 * (0.5 + 0.5 * Math.sin(S.now * 1.4));
     ctx.globalAlpha = a;
     ctx.fillStyle = C.neonCyan;
-    ctx.fillRect(x0, baseY - 10.4 * s, x1 - x0, 0.7 * s);
+    ctx.fillRect(x0, Math.min(baseY - 10.4 * s, sh.top - 0.5 * s), x1 - x0, 0.7 * s);
     ctx.globalAlpha = 1;
   }
 
@@ -702,23 +853,34 @@
 
     /* 装饰线脚 */
     ctx.fillStyle = 'rgba(255,255,255,.06)';
-    ctx.fillRect(x0, top + 0.5 * s, w, 2);
-    ctx.fillRect(x0, baseY - 4.9 * s, w, 2);
+    ctx.fillRect(x0, top + 0.45 * s, w, 2);
+    ctx.fillRect(x0, baseY - 4.25 * s, w, 2);
 
     /* 演播室大窗：暖光 + DJ 剪影 */
-    var wx = x0 + 0.8 * s, wy = baseY - 3.9 * s, ww = w - 1.6 * s, wh = 1.9 * s;
+    var wx = x0 + 0.8 * s, wy = baseY - 3.3 * s, ww = w - 1.6 * s, wh = 1.7 * s;
     var gg = ctx.createLinearGradient(0, wy, 0, wy + wh);
-    gg.addColorStop(0, 'rgba(255,196,110,.92)');
-    gg.addColorStop(1, 'rgba(214,132,60,.72)');
+    gg.addColorStop(0, 'rgba(255,190,104,.82)');
+    gg.addColorStop(1, 'rgba(196,118,50,.60)');
     ctx.fillStyle = gg;
     ctx.fillRect(wx, wy, ww, wh);
+
+    /* 播音台面 */
+    ctx.fillStyle = 'rgba(38,20,9,.55)';
+    ctx.fillRect(wx, wy + wh * 0.74, ww, wh * 0.10);
 
     /* 里面的人 */
     ctx.fillStyle = 'rgba(40,22,10,.85)';
     ctx.beginPath();
     ctx.arc(wx + ww * 0.42, wy + wh * 0.42, wh * 0.19, 0, TAU);
     ctx.fill();
-    ctx.fillRect(wx + ww * 0.42 - wh * 0.26, wy + wh * 0.56, wh * 0.52, wh * 0.5);
+    ctx.fillRect(wx + ww * 0.42 - wh * 0.26, wy + wh * 0.56, wh * 0.52, wh * 0.42);
+
+    /* 耳机 */
+    ctx.strokeStyle = 'rgba(40,22,10,.8)';
+    ctx.lineWidth = Math.max(2, wh * 0.05);
+    ctx.beginPath();
+    ctx.arc(wx + ww * 0.42, wy + wh * 0.42, wh * 0.24, Math.PI * 1.15, Math.PI * 1.85);
+    ctx.stroke();
     /* 麦克风 */
     ctx.strokeStyle = 'rgba(40,22,10,.8)';
     ctx.lineWidth = 2;
@@ -737,14 +899,14 @@
     slot.vuBox = { x: wx + ww * 0.06, y: wy + wh * 0.66, w: ww * 0.2, h: wh * 0.22 };
 
     /* ON AIR 灯箱 */
-    var ay = baseY - 5.5 * s;
+    var ay = baseY - 4.25 * s;
     ctx.fillStyle = 'rgba(10,12,16,.95)';
-    ctx.fillRect(x0 + w * 0.5 - 1.5 * s, ay, 3.0 * s, 0.85 * s);
-    glowText('ON AIR', x0 + w * 0.5, ay + 0.46 * s, Math.round(0.42 * s), '#ff4d5e', 'center', 0.6 * s);
+    ctx.fillRect(x0 + w * 0.5 - 1.5 * s, ay, 3.0 * s, 0.8 * s);
+    glowText('ON AIR', x0 + w * 0.5, ay + 0.43 * s, Math.round(0.4 * s), '#ff4d5e', 'center', 0.6 * s);
 
     /* 电台名牌 */
     ctx.fillStyle = 'rgba(8,12,17,.9)';
-    ctx.fillRect(x0 + 0.6 * s, baseY - 1.35 * s, w - 3.4 * s, 1.15 * s);
+    ctx.fillRect(x0 + 0.6 * s, baseY - 1.5 * s, w - 3.4 * s, 1.0 * s);
     ctx.save();
     ctx.font = '700 ' + Math.round(0.36 * s) + 'px ' + FONT;
     ctx.fillStyle = C.neonAmber;
@@ -752,14 +914,14 @@
     ctx.textBaseline = 'middle';
     ctx.shadowColor = C.neonAmber;
     ctx.shadowBlur = 0.4 * s;
-    ctx.fillText('雨夜电台 · FM 98.7', x0 + 0.85 * s, baseY - 0.78 * s);
+    ctx.fillText('雨夜电台 · FM 98.7', x0 + 0.85 * s, baseY - 1.0 * s);
     ctx.restore();
 
     /* 门 */
-    ctx.fillStyle = 'rgba(255,196,110,.5)';
+    ctx.fillStyle = 'rgba(255,196,110,.42)';
     ctx.fillRect(x1 - 2.5 * s, baseY - 2.3 * s, 1.5 * s, 2.3 * s);
-    ctx.strokeStyle = 'rgba(12,16,22,.9)';
-    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(12,16,22,.55)';
+    ctx.lineWidth = 2;
     ctx.strokeRect(x1 - 2.5 * s, baseY - 2.3 * s, 1.5 * s, 2.3 * s);
 
     /* 屋顶：天线杆 + 卫星锅 */
@@ -778,23 +940,27 @@
     ctx.lineTo(rx + 0.3 * s, top - 0.6 * s);
     ctx.stroke();
 
-    var dx = x0 + w * 0.7, dy = top - 0.85 * s;
+    var dx = x0 + w * 0.7, dy = top - 0.8 * s;
     ctx.fillStyle = '#5a6b7c';
     ctx.beginPath();
-    ctx.ellipse(dx, dy, 0.5 * s, 0.68 * s, -0.5, 0, TAU);
+    ctx.ellipse(dx, dy, 0.36 * s, 0.5 * s, -0.5, 0, TAU);
     ctx.fill();
     ctx.fillStyle = '#2b3542';
     ctx.beginPath();
-    ctx.ellipse(dx, dy, 0.3 * s, 0.44 * s, -0.5, 0, TAU);
+    ctx.ellipse(dx, dy, 0.22 * s, 0.32 * s, -0.5, 0, TAU);
     ctx.fill();
     ctx.strokeStyle = '#5a6b7c';
-    ctx.lineWidth = 2;
+    ctx.lineWidth = Math.max(1.5, 0.035 * s);
     ctx.beginPath();
     ctx.moveTo(dx, dy);
-    ctx.lineTo(dx + 0.42 * s, dy - 0.4 * s);
+    ctx.lineTo(dx + 0.34 * s, dy - 0.3 * s);
     ctx.stroke();
+    ctx.fillStyle = '#7f8f9f';
+    ctx.beginPath();
+    ctx.arc(dx + 0.34 * s, dy - 0.3 * s, 0.055 * s, 0, TAU);
+    ctx.fill();
 
-    slot.beacon = { x: rx, y: top - 2.0 * s };
+    slot.beacon = { x: rx, y: top - 1.1 * s };
     slot.dish = { x: dx, y: dy };
   }
 
@@ -851,8 +1017,8 @@
     } else {
       /* 亮着的小店 */
       var gg = ctx.createLinearGradient(0, gy, 0, baseY);
-      gg.addColorStop(0, 'rgba(255,205,130,.42)');
-      gg.addColorStop(1, 'rgba(255,150,70,.12)');
+      gg.addColorStop(0, 'rgba(255,205,130,.26)');
+      gg.addColorStop(1, 'rgba(255,150,70,.07)');
       ctx.fillStyle = gg;
       ctx.fillRect(x0 + 0.5 * s, gy + 0.5 * s, w - 1.0 * s, 2.3 * s);
       ctx.fillStyle = 'rgba(10,14,20,.9)';
@@ -866,15 +1032,22 @@
 
   /* --------------------------------------------------------------- 人物 --- */
 
-  /* 在「脚底原点、向上为负、单位为世界单位」的空间里画一个连帽衫男子 */
+  /* 在「脚底原点、向上为负、单位为世界单位」的空间里画一个连帽衫男子。
+     叠放顺序严格由后往前：后腿 → 后臂 → 躯干 → 兜帽 → 前臂 → 前腿。
+     肢体是「渐细的梯形」而不是等宽线条，否则看起来像管子不像人。
+     bodyColor 传非空值时整只人只用这一个颜色画，用来做边缘光和倒影。 */
   function walkerBody(g, ph, bodyColor) {
-    var hoodie = bodyColor || C.hoodie;
-    var hoodieHi = bodyColor || C.hoodieHi;
-    var pants = bodyColor || C.pants;
-    var shoe = bodyColor || C.shoe;
-    var skin = bodyColor || C.skin;
+    var rim      = !!bodyColor;
+    var hoodie   = bodyColor || '#3d4856';
+    var hoodieHi = bodyColor || '#57667b';
+    var hoodieLo = bodyColor || '#2c333e';
+    var pants    = bodyColor || '#272e37';
+    var pantsFar = bodyColor || '#1c222b';
+    var boot     = bodyColor || '#10151b';
+    var skin     = bodyColor || '#e0ac84';
 
-    var HIP = -0.86, SHO = -1.40, HEAD = -1.585;
+    var HIP = -0.84, SHO = -1.28, HY = -1.50;   // 髋 / 肩 / 脸中心
+    var bob = -0.02 * Math.abs(Math.sin(ph));   // 迈步时上身的起伏
 
     function seg(ax, ay, bx, by, w, color) {
       g.strokeStyle = color;
@@ -886,132 +1059,189 @@
       g.stroke();
     }
 
-    /* --- 腿 --- */
-    function leg(p, front) {
-      var thigh = 0.52 * Math.sin(p);
-      var knee = 0.66 * Math.max(0, Math.sin(p - 1.15));
-      var kx = 0.46 * Math.sin(thigh);
-      var ky = HIP + 0.46 * Math.cos(thigh);
-      var shin = thigh - knee;
-      var ax = kx + 0.44 * Math.sin(shin);
-      var ay = ky + 0.44 * Math.cos(shin);
-
-      seg(0, HIP, kx, ky, 0.145, pants);
-      seg(kx, ky, ax, ay, 0.125, pants);
-
-      /* 鞋 */
-      g.fillStyle = shoe;
+    /* 渐细的肢体：两段之间的梯形，关节处再补一个圆 */
+    function limb(ax, ay, bx, by, w1, w2, color) {
+      var dx = bx - ax, dy = by - ay;
+      var len = Math.sqrt(dx * dx + dy * dy) || 1;
+      var nx = -dy / len, ny = dx / len;
+      g.fillStyle = color;
       g.beginPath();
-      g.moveTo(ax - 0.055, ay - 0.02);
-      g.lineTo(ax - 0.06, ay + 0.055);
-      g.lineTo(ax + 0.20, ay + 0.055);
-      g.quadraticCurveTo(ax + 0.25, ay + 0.05, ax + 0.24, ay - 0.01);
-      g.lineTo(ax + 0.06, ay - 0.075);
+      g.moveTo(ax + nx * w1 / 2, ay + ny * w1 / 2);
+      g.lineTo(ax - nx * w1 / 2, ay - ny * w1 / 2);
+      g.lineTo(bx - nx * w2 / 2, by - ny * w2 / 2);
+      g.lineTo(bx + nx * w2 / 2, by + ny * w2 / 2);
       g.closePath();
       g.fill();
-      return front ? { x: ax, y: ay } : null;
+    }
+    function joint(x, y, r, color) {
+      g.fillStyle = color;
+      g.beginPath();
+      g.arc(x, y, r, 0, TAU);
+      g.fill();
     }
 
-    /* 后腿先画 */
-    leg(ph + Math.PI, false);
+    /* 一条腿：髋 → 膝 → 踝，再补一只鞋。
+       近腿（front=true）迈步相位 ph，远腿差半拍 π；
+       膝盖只在收腿那半程弯起来。 */
+    function leg(p, far) {
+      var pant = far ? pantsFar : pants;
+      var bootC = far ? '#0b0f14' : boot;
 
-    /* --- 躯干（略前倾） --- */
+      var thighA = 0.36 * Math.sin(p);
+      var kneeA  = 0.9 * Math.max(0, -Math.sin(p - 0.45));
+      var kx = 0.40 * Math.sin(thighA), ky = HIP + 0.40 * Math.cos(thighA);
+      var shinA = thighA - kneeA;
+      var ax = kx + 0.40 * Math.sin(shinA), ay = ky + 0.40 * Math.cos(shinA);
+
+      limb(0, HIP, kx, ky, far ? 0.135 : 0.155, far ? 0.105 : 0.125, pant);
+      joint(kx, ky, far ? 0.05 : 0.06, pant);
+      limb(kx, ky, ax, ay, far ? 0.10 : 0.115, far ? 0.08 : 0.09, pant);
+      joint(ax, ay, far ? 0.04 : 0.045, bootC);
+
+      g.fillStyle = bootC;
+      g.beginPath();
+      g.moveTo(ax - 0.09, ay - 0.02);
+      g.lineTo(ax - 0.09, ay + 0.075);
+      g.quadraticCurveTo(ax - 0.01, ay + 0.10, ax + 0.13, ay + 0.085);
+      g.lineTo(ax + 0.22, ay + 0.055);
+      g.quadraticCurveTo(ax + 0.26, ay + 0.02, ax + 0.21, ay - 0.02);
+      g.lineTo(ax + 0.05, ay - 0.075);
+      g.quadraticCurveTo(ax - 0.02, ay - 0.05, ax - 0.05, ay - 0.02);
+      g.closePath();
+      g.fill();
+    }
+
+    /* 手臂：肩 → 肘 → 手 */
+    function arm(p, color, w) {
+      var up = 0.38 * Math.sin(p + Math.PI);
+      var ex = 0.04 + 0.27 * Math.sin(up), ey = SHO - 0.02 + 0.27 * Math.cos(up);
+      var fa = up + 0.35;
+      var hx = ex + 0.24 * Math.sin(fa), hy = ey + 0.24 * Math.cos(fa);
+      limb(0.04, SHO - 0.02, ex, ey, w, w * 0.86, color);
+      joint(ex, ey, w * 0.5, color);
+      limb(ex, ey, hx, hy, w * 0.8, w * 0.62, color);
+      joint(hx, hy, w * 0.5, color);          /* 手 */
+    }
+
+    leg(ph + Math.PI, true);
+
+    /* 躯干整体略前倾，头肩随之上浮一小点（走路时的起伏） */
     g.save();
     g.translate(0, HIP);
     g.rotate(-0.055);
-    g.translate(0, -HIP);
+    g.translate(0, -HIP + bob);
 
+    arm(ph + Math.PI, hoodieLo, 0.105);        /* 远侧手臂与远侧腿反相，压暗 */
+
+    /* 脖子 */
+    seg(0.02, SHO + 0.02, 0.03, SHO - 0.14, 0.075, hoodieLo);
+
+    /* 躯干：上宽下窄的梯形 */
+    var shF = 0.20, shB = -0.27, hpF = 0.155, hpB = -0.185;
     g.fillStyle = hoodie;
     g.beginPath();
-    var tw = 0.175;
-    var ty0 = HIP - 0.02, ty1 = SHO - 0.09;
-    g.moveTo(-tw, ty0);
-    g.lineTo(tw, ty0);
-    g.lineTo(tw + 0.02, ty1);
-    g.quadraticCurveTo(0.02, ty1 - 0.06, -tw + 0.02, ty1);
+    g.moveTo(shF, SHO - 0.04);
+    g.lineTo(hpF, HIP + 0.02);
+    g.quadraticCurveTo(0, HIP + 0.07, hpB, HIP + 0.02);
+    g.lineTo(shB + 0.05, SHO - 0.08);
+    g.quadraticCurveTo(0, SHO - 0.14, shF, SHO - 0.04);
     g.closePath();
     g.fill();
 
-    /* 连帽衫口袋 */
-    g.strokeStyle = 'rgba(0,0,0,.35)';
-    g.lineWidth = 0.02;
+    /* 下摆暗边 */
+    g.fillStyle = hoodieLo;
     g.beginPath();
-    g.moveTo(-0.12, HIP - 0.16);
-    g.quadraticCurveTo(0, HIP - 0.24, 0.14, HIP - 0.14);
+    g.moveTo(hpF, HIP + 0.02);
+    g.quadraticCurveTo(0, HIP + 0.07, hpB, HIP + 0.02);
+    g.lineTo(hpB + 0.02, HIP - 0.035);
+    g.quadraticCurveTo(0, HIP + 0.015, hpF - 0.02, HIP - 0.035);
+    g.closePath();
+    g.fill();
+
+    /* 口袋 */
+    g.strokeStyle = hoodieLo;
+    g.lineWidth = 0.024;
+    g.beginPath();
+    g.moveTo(-0.14, HIP - 0.15);
+    g.quadraticCurveTo(0.02, HIP - 0.24, 0.16, HIP - 0.14);
     g.stroke();
 
-    /* --- 远侧手臂 --- */
-    function arm(p, color) {
-      var up = 0.46 * Math.sin(p + Math.PI);
-      var ex = -0.01 + 0.30 * Math.sin(up);
-      var ey = SHO + 0.30 * Math.cos(up);
-      var fore = up + 0.42;
-      var hx = ex + 0.27 * Math.sin(fore);
-      var hy = ey + 0.27 * Math.cos(fore);
-      seg(-0.01, SHO, ex, ey, 0.12, color);
-      seg(ex, ey, hx, hy, 0.10, color);
-      g.fillStyle = color;
-      g.beginPath();
-      g.arc(hx, hy, 0.072, 0, TAU);
-      g.fill();
-    }
-
-    arm(ph + 0.5, bodyColor || '#232b36');   /* 后臂暗一点 */
-
-    /* --- 兜帽 + 头 --- */
+    /* 兜帽：后脑一团 + 顶上一片，前面留出脸 */
     g.fillStyle = hoodie;
     g.beginPath();
-    g.arc(0.10, HEAD + 0.02, 0.152, 0, TAU);       /* 脸侧的帽兜 */
-    g.arc(-0.035, HEAD + 0.055, 0.125, 0, TAU);    /* 后脑的帽子 */
+    g.arc(-0.05, HY, 0.16, 0, TAU);
+    g.arc(-0.01, HY - 0.04, 0.135, 0, TAU);
     g.fill();
 
-    /* 帽檐下沿 */
-    g.fillStyle = bodyColor || '#232b36';
+    /* 帽顶受光 */
+    g.strokeStyle = hoodieHi;
+    g.lineWidth = 0.022;
+    g.lineCap = 'round';
     g.beginPath();
-    g.moveTo(-0.14, HEAD + 0.13);
-    g.quadraticCurveTo(0.05, HEAD + 0.22, 0.21, HEAD + 0.12);
-    g.lineTo(0.16, HEAD + 0.03);
-    g.quadraticCurveTo(0.02, HEAD + 0.13, -0.10, HEAD + 0.06);
+    g.arc(-0.02, HY - 0.02, 0.135, Math.PI * 1.05, Math.PI * 1.7);
+    g.stroke();
+
+    /* 侧脸：额头 → 鼻 → 嘴 → 下巴，肤色剪影 */
+    g.fillStyle = skin;
+    g.beginPath();
+    g.moveTo(0.03, HY - 0.12);
+    g.quadraticCurveTo(0.13, HY - 0.10, 0.13, HY - 0.02);
+    g.quadraticCurveTo(0.155, HY + 0.02, 0.15, HY + 0.045);
+    g.quadraticCurveTo(0.13, HY + 0.06, 0.115, HY + 0.06);
+    g.quadraticCurveTo(0.125, HY + 0.10, 0.115, HY + 0.11);
+    g.quadraticCurveTo(0.145, HY + 0.125, 0.12, HY + 0.145);
+    g.quadraticCurveTo(0.08, HY + 0.16, 0.03, HY + 0.14);
+    g.lineTo(-0.01, HY + 0.03);
     g.closePath();
     g.fill();
 
-    /* 兜帽开口：很暗，只留一点下巴 */
-    g.fillStyle = bodyColor || '#070a0e';
-    g.beginPath();
-    g.ellipse(0.115, HEAD + 0.035, 0.055, 0.078, -0.12, 0, TAU);
-    g.fill();
-    if (!bodyColor) {
-      g.fillStyle = hexA(C.skin, 0.55);
+    if (!rim) {
+      /* 眼睛 + 一点眉骨阴影 */
+      g.fillStyle = '#1c130b';
       g.beginPath();
-      g.ellipse(0.128, HEAD + 0.085, 0.026, 0.024, 0, 0, TAU);
+      g.arc(0.10, HY - 0.045, 0.016, 0, TAU);
       g.fill();
-    }
-
-    /* 抽绳 */
-    if (!bodyColor) {
-      g.strokeStyle = 'rgba(210,220,232,.45)';
-      g.lineWidth = 0.014;
+      g.strokeStyle = 'rgba(120,80,50,.45)';
+      g.lineWidth = 0.008;
       g.beginPath();
-      g.moveTo(0.055, HEAD + 0.13);
-      g.lineTo(0.045, HEAD + 0.29);
-      g.moveTo(0.10, HEAD + 0.14);
-      g.lineTo(0.115, HEAD + 0.30);
+      g.moveTo(0.075, HY - 0.065);
+      g.quadraticCurveTo(0.105, HY - 0.075, 0.125, HY - 0.06);
       g.stroke();
     }
 
-    /* --- 近侧手臂 --- */
-    arm(ph, hoodieHi);
+    /* 帽兜前沿，把脸轻轻框起来 */
+    g.strokeStyle = hoodieLo;
+    g.lineWidth = 0.035;
+    g.lineCap = 'round';
+    g.beginPath();
+    g.moveTo(-0.03, HY - 0.15);
+    g.quadraticCurveTo(0.15, HY - 0.17, 0.135, HY + 0.01);
+    g.quadraticCurveTo(0.14, HY + 0.12, 0.06, HY + 0.17);
+    g.stroke();
+
+    /* 抽绳 */
+    if (!rim) {
+      g.strokeStyle = 'rgba(215,224,236,.5)';
+      g.lineWidth = 0.015;
+      g.beginPath();
+      g.moveTo(0.04, HY + 0.16);
+      g.lineTo(0.035, HY + 0.33);
+      g.moveTo(0.09, HY + 0.165);
+      g.lineTo(0.105, HY + 0.335);
+      g.stroke();
+    }
+
+    arm(ph, hoodieHi, 0.12);                  /* 近侧手臂与近侧腿反相，亮一点 */
 
     g.restore();
 
-    /* 前腿最后画，压在躯干上 */
-    leg(ph, true);
+    leg(ph, false);
   }
 
   function drawPlayer() {
     var s = scaleAt(PLAYER_Z);
     var px = screenX(player.x, PLAYER_Z);
-    var py = groundY(PLAYER_Z);
+    var py = sideY(PLAYER_Z);         /* 人物走在抬高的行人道上 */
     if (px < -s * 4 || px > S.W + s * 4) return;
 
     /* 地面投影 */
@@ -1020,11 +1250,11 @@
     ctx.ellipse(px, py - 0.02 * s, 0.34 * s, 0.09 * s, 0, 0, TAU);
     ctx.fill();
 
-    /* 湿地面上的倒影：翻转并压扁 */
+    /* 湿地面上的倒影：翻转、压扁、再淡一些，免得像第二个人 */
     ctx.save();
-    ctx.globalAlpha = 0.22;
+    ctx.globalAlpha = 0.13;
     ctx.translate(px, py);
-    ctx.scale(player.dir * s, -s * 0.52);
+    ctx.scale(player.dir * s, -s * 0.36);
     ctx.translate(0, 0.02);
     walkerBody(ctx, player.phase, null);
     ctx.restore();
@@ -1047,13 +1277,9 @@
 
   /* --------------------------------------------------------------- 主循环 --- */
 
-  function drawBackdropClear() {
-    /* 画布保持透明：天空、云、远处的雨由底下的主场景负责 */
-  }
-
   function draw() {
     var s = scaleAt(FACADE_Z);
-    var baseY = groundY(FACADE_Z);
+    var baseY = sideY(FACADE_Z);      /* 店面基座落在抬高的人行道面上 */
     var i, slot;
 
     ctx.setTransform(S.dpr, 0, 0, S.dpr, 0, 0);
@@ -1078,7 +1304,7 @@
       ctx.restore();
     }
 
-    drawSidewalk();
+    drawGround();
 
     /* 招牌在湿地上的光斑 */
     for (i = 0; i < street.slots.length; i++) {
@@ -1087,8 +1313,11 @@
       x0 = screenX(slot.x, FACADE_Z);
       x1 = screenX(slot.x + slot.w, FACADE_Z);
       if (x1 < -80 || x0 > S.W + 80) continue;
-      drawSpill(x0, x1, baseY, s, slot.spill, 1);
+      drawSpill(x0, x1, baseY, s, slot.spill, 0.75);
     }
+
+    /* 路灯：立在人行道里侧，位于人物之后 */
+    drawLamps();
 
     /* 地标上会动的部分 */
     for (i = 0; i < street.slots.length; i++) {
@@ -1107,6 +1336,7 @@
 
     drawPlayer();
     drawRain();
+    drawVignette();
   }
 
   function frame(ts) {
@@ -1127,19 +1357,24 @@
 
     S.now = now / 1000;
 
-    /* 行走：按住方向键时听用户的，松手就自动向前；
-       走到街道两端就掉头，这样街道不必首尾相接也能一直走下去。 */
-    if (player.steer !== 0) {
-      player.dir = player.steer;
-    } else if (player.x <= 0.6) {
-      player.dir = 1;
-    } else if (player.x >= street.length - 0.6) {
-      player.dir = -1;
+    if (player.locked) {
+      /* 锁定观察：站在原地，只有极慢的姿态变化，方便看清面前的楼 */
+      player.phase += dt * player.speed * 0.8;
+    } else {
+      /* 行走：按住方向键时听用户的，松手就自动向前；
+         走到街道两端就掉头，这样街道不必首尾相接也能一直走下去。 */
+      if (player.steer !== 0) {
+        player.dir = player.steer;
+      } else if (player.x <= 0.6) {
+        player.dir = 1;
+      } else if (player.x >= street.length - 0.6) {
+        player.dir = -1;
+      }
+      player.phase += dt * player.speed * 4.4;
+      player.x = clamp(player.x + player.speed * dt * player.dir, 0, street.length);
     }
 
-    player.phase += dt * player.speed * 4.4;
     if (player.phase > TAU * 1000) player.phase -= TAU * 1000;
-    player.x = clamp(player.x + player.speed * dt * player.dir, 0, street.length);
 
     /* 镜头：让人物落在画面偏左处 */
     var lead = S.W * LEAD * PLAYER_Z / FOCAL;
@@ -1205,6 +1440,25 @@
     return best;
   }
 
+  /* 把玩家放到某个地标前面：找离当前最近的那一处（绕一整圈也算） */
+  function placeBefore(wantId) {
+    var best = null, bd = 1e9;
+    for (var k = 0; k < marks.length; k++) {
+      if (marks[k].id !== wantId) continue;
+      var c = marks[k].slot.x + marks[k].slot.w * 0.5;
+      var d = c - player.x;
+      if (d < -0.5) d += street.length;
+      if (d < bd) { bd = d; best = marks[k]; }
+    }
+    if (!best) return false;
+
+    var lead = S.W * LEAD * PLAYER_Z / FOCAL;
+    player.x = clamp(best.slot.x + best.slot.w * 0.5 - 1.5 - lead, 0, street.length);
+    cam.x = player.x + lead;
+    cam.sx = cam.x;
+    return true;
+  }
+
   window.RainyWalk = {
     isActive: function () { return S.active; },
 
@@ -1245,36 +1499,50 @@
       return out;
     },
 
-    /* 走到第 i 个地点最近的那一处前面 */
+    /* 走到第 i 个地点最近的那一处前面（?at=N 深链用，不锁定） */
     jumpTo: function (i) {
       var ids = this.list();
       var want = ids[i] && ids[i].id;
       if (!want) return;
       if (!S.active) this.enter();
-
-      var best = null, bd = 1e9;
-      for (var k = 0; k < marks.length; k++) {
-        if (marks[k].id !== want) continue;
-        var c = marks[k].slot.x + marks[k].slot.w * 0.5;
-        var d = c - player.x;
-        if (d < -0.5) d += street.length;   // 落在身后的算成一整圈的距离
-        if (d < bd) { bd = d; best = marks[k]; }
-      }
-      if (!best) return;
-
-      var lead = S.W * LEAD * PLAYER_Z / FOCAL;
-      player.x = clamp(best.slot.x + best.slot.w * 0.5 - 1.2 - lead, 0, street.length);
-      cam.x = player.x + lead;
-      cam.sx = cam.x;
+      placeBefore(want);
     },
+
+    /* 测试用：锁定在某个地标前面，站在原地方便观察 */
+    focus: function (id) {
+      if (!S.active) this.enter();
+      if (!placeBefore(id)) return;
+      player.locked = true;
+      player.lockId = id;
+    },
+    resume: function () { player.locked = false; player.lockId = null; },
+    isLocked: function () { return player.locked; },
+    lockName: function () { return player.lockId; },
 
     current: function () {
       var n = nearest();
       return n ? { name: n.def.name, id: n.def.id } : null;
     },
 
-    /* 方向：-1 往左，1 往右，0 交回自动 */
-    steer: function (d) { player.steer = d < 0 ? -1 : d > 0 ? 1 : 0; }
+    /* 方向：-1 往左，1 往右，0 交回自动；手动行走会解除锁定 */
+    steer: function (d) {
+      player.steer = d < 0 ? -1 : d > 0 ? 1 : 0;
+      if (d !== 0 && player.locked) { player.locked = false; player.lockId = null; }
+    },
+
+    /* 自查用：把内部状态抖出来 */
+    status: function () {
+      return {
+        running: S.running,
+        active: S.active,
+        x: +player.x.toFixed(3),
+        cam: +cam.sx.toFixed(3),
+        phase: +player.phase.toFixed(3),
+        now: +S.now.toFixed(3),
+        drops: drops.length,
+        visible: +visibleUnits().toFixed(2)
+      };
+    }
   };
 
   buildStreet();
