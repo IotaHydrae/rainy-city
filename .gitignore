@@ -1,0 +1,12 @@
+# 参考图：页面并不引用它，而且是第三方游戏画面，不入库
+assets/rainy-city.png
+
+# 自检脚本跑出来的截图与 DOM 转储
+_verify/*.png
+_verify/*-dom.html
+
+# 系统杂物
+Thumbs.db
+Desktop.ini
+.DS_Store
+*.tmp

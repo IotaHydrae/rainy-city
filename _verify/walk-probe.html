@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>walk probe</title>
+<style>body{margin:0;background:#111;color:#eee;font:12px/1.6 monospace}pre{padding:10px}</style>
+</head>
+<body>
+<pre id="o">pending</pre>
+<iframe id="f" src="/" width="1280" height="800" style="width:1280px;height:800px;border:0"></iframe>
+<script>
+var log = [];
+var f = document.getElementById('f');
+
+f.onload = function () {
+  var w = f.contentWindow, d = f.contentDocument;
+  var errs = [];
+  w.addEventListener('error', function (e) { errs.push((e.message || '?') + ' @' + e.lineno); });
+
+  function done() {
+    log.push('runtime errors = ' + (errs.length ? errs.join(' | ') : 'none'));
+    document.getElementById('o').textContent = log.join('\n');
+  }
+
+  setTimeout(function () {
+    var btn = d.getElementById('walkBtn');
+    log.push('逛逛城市是按钮      = ' + (btn && btn.tagName));
+    log.push('RainyWalk 存在      = ' + typeof w.RainyWalk);
+
+    btn.click();
+
+    setTimeout(function () {
+      log.push('body.is-walking     = ' + d.body.classList.contains('is-walking'));
+      log.push('RainyWalk.isActive  = ' + w.RainyWalk.isActive());
+
+      var cv = d.getElementById('walk');
+      log.push('canvas 尺寸         = ' + cv.width + 'x' + cv.height);
+      var a = cv.toDataURL();
+      log.push('画面非空            = ' + (a.length > 20000) + ' (' + a.length + ' bytes)');
+
+      var list = w.RainyWalk.list();
+      log.push('地标数量            = ' + list.length);
+      log.push('地标名              = ' + list.map(function (x) { return x.name; }).join(' / '));
+      log.push('导航按钮            = ' + d.querySelectorAll('.walk-nav__btn').length);
+      log.push('当前地点            = ' + (w.RainyWalk.current() || {}).name);
+      log.push('HUD 地名            = ' + d.getElementById('walkNow').textContent);
+
+      /* 跳转到第 3 个地标 */
+      w.RainyWalk.jumpTo(2);
+      setTimeout(function () {
+        log.push('跳转后当前地点      = ' + (w.RainyWalk.current() || {}).name);
+        log.push('HUD 地名(跳转后)    = ' + d.getElementById('walkNow').textContent);
+
+        var b = cv.toDataURL();
+        log.push('画面在动            = ' + (a !== b));
+
+        /* 退出，确认主场景把楼群收回来 */
+        d.getElementById('walkExit').click();
+        setTimeout(function () {
+          log.push('退出后 isActive     = ' + w.RainyWalk.isActive());
+          log.push('退出后 is-walking   = ' + d.body.classList.contains('is-walking'));
+          log.push('canvas 已清空       = ' + (d.getElementById('walk').toDataURL().length < 5000));
+          done();
+        }, 350);
+      }, 900);
+    }, 900);
+  }, 400);
+};
+</script>
+</body>
+</html>
